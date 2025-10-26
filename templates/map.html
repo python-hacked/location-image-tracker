@@ -1,49 +1,193 @@
 <!doctype html>
-<html>
+<html lang="en">
 <head>
   <meta charset="utf-8"/>
-  <title>Location Map</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Location Map - {{ image_id }}</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
   <style>
-    body { margin: 0; padding: 0; }
-    #map { height: 100vh; width: 100vw; }
+    * { box-sizing: border-box; }
+    body {
+      font-family: 'Inter', sans-serif;
+      margin: 0;
+      padding: 0;
+      background: #f5f5f5;
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+    }
+    .header {
+      background: white;
+      padding: 16px 20px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+      z-index: 1000;
+    }
+    .header h1 {
+      margin: 0;
+      font-size: 20px;
+      color: #333;
+      font-weight: 600;
+    }
+    .header p {
+      margin: 4px 0 0 0;
+      color: #666;
+      font-size: 14px;
+    }
+    #map {
+      flex: 1;
+      width: 100%;
+    }
+    .loading {
+      position: fixed;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      background: white;
+      padding: 20px;
+      border-radius: 8px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+      z-index: 1001;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .spinner {
+      width: 20px;
+      height: 20px;
+      border: 3px solid #f3f3f3;
+      border-top: 3px solid #667eea;
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+    }
+    @keyframes spin {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+    .stats {
+      position: absolute;
+      top: 80px;
+      right: 20px;
+      background: white;
+      padding: 12px 16px;
+      border-radius: 8px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+      z-index: 999;
+      font-size: 14px;
+      display: none;
+    }
+    .stats.show { display: block; }
+    .stats div {
+      margin: 4px 0;
+    }
+    .stats .label {
+      font-weight: 500;
+      color: #666;
+    }
+    .stats .value {
+      color: #333;
+    }
+    @media (max-width: 600px) {
+      .header { padding: 12px 16px; }
+      .header h1 { font-size: 18px; }
+      .stats { top: 70px; right: 10px; left: 10px; position: static; margin: 10px; }
+    }
   </style>
 </head>
 <body>
+  <div class="header">
+    <h1>🗺️ Location Map</h1>
+    <p>Tracking data for image: {{ image_id }}</p>
+  </div>
   <div id="map"></div>
+  <div class="loading" id="loading">
+    <div class="spinner"></div>
+    <span>Loading location data...</span>
+  </div>
+  <div class="stats" id="stats">
+    <div><span class="label">Total Points:</span> <span class="value" id="totalPoints">0</span></div>
+    <div><span class="label">Latest Accuracy:</span> <span class="value" id="latestAccuracy">-</span></div>
+    <div><span class="label">Last Update:</span> <span class="value" id="lastUpdate">-</span></div>
+  </div>
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script>
   const imageId = "{{ image_id }}";
-  const map = L.map('map').setView([20, 0], 2); // default world view
+  const map = L.map('map').setView([20, 0], 2);
+  const loading = document.getElementById('loading');
+  const stats = document.getElementById('stats');
+  const totalPointsEl = document.getElementById('totalPoints');
+  const latestAccuracyEl = document.getElementById('latestAccuracy');
+  const lastUpdateEl = document.getElementById('lastUpdate');
 
-  // Add OpenStreetMap tiles
+  // Custom marker icons
+  const locationIcon = L.icon({
+    iconUrl: 'data:image/svg+xml;base64,' + btoa(`
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <circle cx="12" cy="12" r="8" fill="#667eea" stroke="white" stroke-width="2"/>
+        <circle cx="12" cy="12" r="3" fill="white"/>
+      </svg>
+    `),
+    iconSize: [24, 24],
+    iconAnchor: [12, 12],
+    popupAnchor: [0, -12]
+  });
+
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-    attribution: '&copy; OpenStreetMap contributors'
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
   }).addTo(map);
 
   async function loadLocations() {
-    const res = await fetch(`/logs/${imageId}`);
-    const data = await res.json();
+    try {
+      const res = await fetch(`/logs/${imageId}`);
+      const data = await res.json();
 
-    if (data.length === 0) {
-      alert("No locations found for this image");
-      return;
-    }
-
-    const coords = [];
-    data.forEach(rec => {
-      const p = rec.payload;
-      if (p.lat && p.lon && p.accuracy < 1000000) { // filter garbage
-        coords.push([p.lat, p.lon]);
-        L.marker([p.lat, p.lon])
-          .addTo(map)
-          .bindPopup(`Lat: ${p.lat}<br>Lon: ${p.lon}<br>Acc: ${p.accuracy}m<br>Time: ${p.ts}`);
+      if (data.length === 0) {
+        loading.innerHTML = '<span>No locations found for this image</span>';
+        setTimeout(() => loading.style.display = 'none', 2000);
+        return;
       }
-    });
 
-    if (coords.length > 0) {
-      map.fitBounds(coords);
+      const coords = [];
+      let latestRecord = null;
+
+      data.forEach((rec, index) => {
+        const p = rec.payload;
+        if (p.lat && p.lon && p.accuracy < 1000000) {
+          coords.push([p.lat, p.lon]);
+          const marker = L.marker([p.lat, p.lon], { icon: locationIcon })
+            .addTo(map)
+            .bindPopup(`
+              <div style="font-family: Inter, sans-serif; font-size: 14px;">
+                <strong>Location ${index + 1}</strong><br>
+                📍 Lat: ${p.lat.toFixed(6)}<br>
+                📍 Lon: ${p.lon.toFixed(6)}<br>
+                🎯 Accuracy: ${Math.round(p.accuracy)}m<br>
+                🕒 Time: ${new Date(p.ts).toLocaleString()}
+              </div>
+            `);
+
+          if (!latestRecord || new Date(p.ts) > new Date(latestRecord.payload.ts)) {
+            latestRecord = rec;
+          }
+        }
+      });
+
+      if (coords.length > 0) {
+        map.fitBounds(coords, { padding: [20, 20] });
+        stats.classList.add('show');
+        totalPointsEl.textContent = coords.length;
+        if (latestRecord) {
+          latestAccuracyEl.textContent = Math.round(latestRecord.payload.accuracy) + 'm';
+          lastUpdateEl.textContent = new Date(latestRecord.payload.ts).toLocaleString();
+        }
+      }
+
+      loading.style.display = 'none';
+    } catch (error) {
+      loading.innerHTML = '<span>Error loading location data</span>';
+      console.error('Error loading locations:', error);
+      setTimeout(() => loading.style.display = 'none', 3000);
     }
   }
 
